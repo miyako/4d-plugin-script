@@ -27,7 +27,7 @@ result|TEXT|value
 
 ```
 $result:=Script parse ("JScript";"Date()")
-$result:=Script parse (".js";"1+2 ")
+$result:=Script parse (".js";"1+2")
 
 $result:=Script parse ("vbscript";"Now")
 $result:=Script parse (".vbs";"Now")
