@@ -12,7 +12,6 @@
 #include <initguid.h>
 #include <ole2.h>
 #include <activscp.h>
-#include <atlstr.h>
 #endif
 
 // --- Script
