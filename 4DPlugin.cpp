@@ -51,13 +51,29 @@ public IActiveScriptSiteWindow {
 	HWND m_hWnd;
 	public:
 
-	MyActiveScriptSite::MyActiveScriptSite() : m_cRefCount(1), m_hWnd(NULL) {}
-	MyActiveScriptSite::~MyActiveScriptSite() {}
+	MyActiveScriptSite() : m_cRefCount(1), m_hWnd(NULL) {}
+	~MyActiveScriptSite() {}
 	
 	// IUnknown methods...
 	virtual HRESULT _stdcall QueryInterface(REFIID riid, void **ppvObject) {
-		*ppvObject = NULL;
-		return E_NOTIMPL;
+		if (ppvObject == NULL) return E_POINTER;
+
+		if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_IActiveScriptSite))
+		{
+			*ppvObject = static_cast<IActiveScriptSite *>(this);
+		}
+		else if (IsEqualIID(riid, IID_IActiveScriptSiteWindow))
+		{
+			*ppvObject = static_cast<IActiveScriptSiteWindow *>(this);
+		}
+		else
+		{
+			*ppvObject = NULL;
+			return E_NOINTERFACE;
+		}
+
+		AddRef();
+		return S_OK;
 	}
 	
 	virtual ULONG _stdcall AddRef(void) {
@@ -65,16 +81,23 @@ public IActiveScriptSiteWindow {
 	}
 	
 	virtual ULONG _stdcall Release(void) {
-		if (!InterlockedDecrement(&m_cRefCount))
+		// NOTE: g_ActiveScriptSite (below) is a global/static object, not a
+		// heap-allocated one, so this must never call "delete this" -- doing so
+		// on a non-heap object is undefined behavior. Floor the refcount at 0
+		// and let the object simply live for the lifetime of the plugin.
+		LONG count = InterlockedDecrement(&m_cRefCount);
+		if (count < 0)
 		{
-			delete this;
+			InterlockedIncrement(&m_cRefCount); // undo: never go negative
 			return 0;
 		}
-		return m_cRefCount;
+		return (ULONG)count;
 	}
 	
 	// IActiveScriptSite methods...
 	virtual HRESULT _stdcall GetLCID(LCID *plcid) {
+		if (plcid == NULL) return E_POINTER;
+		*plcid = GetUserDefaultLCID();
 		return S_OK;
 	}
 	
@@ -143,24 +166,25 @@ OleInitClass g_OleInitClass;
 
 /* https://www.codeproject.com/Articles/14905/COM-in-plain-C-Part */
 
-HRESULT getEngineGuid(LPCTSTR extension, GUID *guidBuffer)
+HRESULT getEngineGuid(LPCWSTR extension, GUID *guidBuffer)
 {
 	wchar_t   buffer[100];
-	HKEY      hk;
+	HKEY      hk = NULL;
 	DWORD     size;
 	HKEY      subKey;
 	DWORD     type;
 	
 	// See if this file extension is associated
 	// with an ActiveX script engine
-	if (!RegOpenKeyEx(HKEY_CLASSES_ROOT, extension, 0,
+	if (!RegOpenKeyExW(HKEY_CLASSES_ROOT, extension, 0,
 										KEY_QUERY_VALUE|KEY_READ, &hk))
 	{
 		type = REG_SZ;
 		size = sizeof(buffer);
-		size = RegQueryValueEx(hk, 0, 0, &type,
+		size = RegQueryValueExW(hk, 0, 0, &type,
 													 (LPBYTE)&buffer[0], &size);
 		RegCloseKey(hk);
+		hk = NULL;
 		if (!size)
 		{
 			// The engine set an association.
@@ -169,12 +193,12 @@ HRESULT getEngineGuid(LPCTSTR extension, GUID *guidBuffer)
 			
 			// Open HKEY_CLASSES_ROOT\{LanguageName}
 		again:   size = sizeof(buffer);
-			if (!RegOpenKeyEx(HKEY_CLASSES_ROOT, (LPCTSTR)&buffer[0], 0,
+			if (!RegOpenKeyExW(HKEY_CLASSES_ROOT, (LPCWSTR)&buffer[0], 0,
 												KEY_QUERY_VALUE|KEY_READ, &hk))
 			{
 				// Read the GUID (in string format)
 				// into buffer[] by querying the value of CLSID
-				if (!RegOpenKeyEx(hk, L"CLSID", 0,
+				if (!RegOpenKeyExW(hk, L"CLSID", 0,
 													KEY_QUERY_VALUE|KEY_READ, &subKey))
 				{
 					size = RegQueryValueExW(subKey, 0, 0, &type,
@@ -186,23 +210,32 @@ HRESULT getEngineGuid(LPCTSTR extension, GUID *guidBuffer)
 					// If an error, see if we have a "ScriptEngine"
 					// key under here that contains
 					// the real language name
-					if (!RegOpenKeyEx(hk, L"ScriptEngine", 0,
+					if (!RegOpenKeyExW(hk, L"ScriptEngine", 0,
 														KEY_QUERY_VALUE|KEY_READ, &subKey))
 					{
-						size = RegQueryValueEx(subKey, 0, 0, &type,
+						size = RegQueryValueExW(subKey, 0, 0, &type,
 																	 (LPBYTE)&buffer[0], &size);
 						RegCloseKey(subKey);
 						if (!size)
 						{
 							RegCloseKey(hk);
+							hk = NULL;
 							extension = 0;
 							goto again;
 						}
 					}
 				}
 			}
+			else
+			{
+				hk = NULL; // RegOpenKeyExW failed: nothing was opened, don't close it below
+			}
 			
-			RegCloseKey(hk);
+			if (hk != NULL)
+			{
+				RegCloseKey(hk);
+				hk = NULL;
+			}
 			
 			if (!size)
 			{
@@ -235,10 +268,18 @@ void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 	ZeroMemory(&ei, sizeof(ei));
 	
 	VARIANT result;
+	VariantInit(&result);
 	
-	IActiveScript *pActiveScript;
-	IActiveScriptParse *pActiveScriptParse;
-	
+	IActiveScript *pActiveScript = NULL;
+	IActiveScriptParse *pActiveScriptParse = NULL;
+
+	// COM is initialized per-thread. 4D can invoke plugin commands from worker/
+	// preemptive process threads other than the one that ran this DLL's static
+	// initializers, so a single global OleInitialize() at load time is not
+	// sufficient -- ensure THIS thread is COM-initialized before using it here.
+	HRESULT hrCoInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	bool comInitializedHere = (hrCoInit == S_OK); // S_FALSE/RPC_E_CHANGED_MODE => already initialized elsewhere; don't uninit what we didn't init
+
 	CLSID CLSID_Script;
 	hr = CLSIDFromProgID(engine, &CLSID_Script);
 	
@@ -302,10 +343,21 @@ void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 								returnValue.setUTF8String(&u8);
 								break;
 							case VT_R8:
-								sprintf_s((char *)&buf[0], 100, "%16.16lf", result.dblVal);
-								u8 = (const uint8_t *)&buf[0];
+							{
+								// "%16.16lf" has no upper bound on output length (16 is only a
+								// minimum field width) -- a large-magnitude double (e.g. 1e300)
+								// needs 300+ characters and previously overflowed the fixed
+								// 100-byte buffer, which made sprintf_s invoke the CRT's
+								// invalid-parameter handler and abort() the whole host process.
+								// Compute the required length first and size the buffer to fit.
+								int needed = _scprintf("%16.16lf", result.dblVal);
+								if (needed < 0) needed = 0;
+								std::vector<char> dblBuf((size_t)needed + 1);
+								sprintf_s(&dblBuf[0], dblBuf.size(), "%16.16lf", result.dblVal);
+								u8 = (const uint8_t *)&dblBuf[0];
 								returnValue.setUTF8String(&u8);
 								break;
+							}
 
 							case VT_I2:
 								sprintf_s((char *)&buf[0], 100, "%d", result.intVal);
@@ -362,6 +414,12 @@ void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 								break;
 							}
 
+							// result may own a BSTR (VT_BSTR) or an interface (VT_DISPATCH /
+							// VT_UNKNOWN, e.g. a JScript Date() object) that was never released
+							// before. VariantClear releases whatever resource it holds; any
+							// data needed above was already copied out via u8/u16 before this.
+							VariantClear(&result);
+
 							pActiveScript->SetScriptState(SCRIPTSTATE_CONNECTED);
 						}/* ParseScriptText */
 						
@@ -376,6 +434,11 @@ void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 			pActiveScript = NULL;
 		}/* CoCreateInstance */
 
+	}
+
+	if (comInitializedHere)
+	{
+		CoUninitialize();
 	}
 	
 	returnValue.setReturn(pResult);
