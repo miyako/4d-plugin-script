@@ -43,6 +43,8 @@ void CommandDispatcher (PA_long32 pProcNum, sLONG_PTR *pResult, PackagePtr pPara
 
 #pragma mark MyActiveScriptSite
 
+#if VERSIONWIN
+
 class MyActiveScriptSite :
 public IActiveScriptSite,
 public IActiveScriptSiteWindow {
@@ -250,8 +252,11 @@ HRESULT getEngineGuid(LPCWSTR extension, GUID *guidBuffer)
 	return(E_FAIL);
 }
 
+#endif
+
 void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 {
+#if VERSIONWIN
 	C_TEXT Param1_engine;
 	C_TEXT Param2_script;
 	C_TEXT returnValue;
@@ -442,5 +447,5 @@ void Script_parse(sLONG_PTR *pResult, PackagePtr pParams)
 	}
 	
 	returnValue.setReturn(pResult);
+#endif
 }
-
