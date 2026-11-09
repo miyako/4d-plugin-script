@@ -271,6 +271,8 @@ class GitTests(unittest.TestCase):
         for key, value in (("user.name", "Lifecycle Test"), ("user.email", "test@example.invalid"),
                            ("push.followTags", "true")):
             git(self.local, "config", key, value)
+        git(self.local, "commit", "--allow-empty", "-m", "ancestor")
+        self.ancestor = git(self.local, "rev-parse", "HEAD")
         copy_source(self.local)
         shutil.copytree(ROOT / ".github/scripts", self.local / ".github/scripts",
                         ignore=shutil.ignore_patterns("__pycache__"))
@@ -349,6 +351,61 @@ class GitTests(unittest.TestCase):
         self.assertEqual(git(self.remote, "rev-parse", "refs/heads/selected"),
                          git(self.peer, "rev-parse", "HEAD"))
         self.assertEqual(git(self.remote, "tag", "--list"), "")
+
+    def advertised_race(self, kind):
+        real_run = release.run
+        expected = None
+        pushes = 0
+        def concurrent_push(*args, **kwargs):
+            nonlocal expected, pushes
+            if "push" in args:
+                pushes += 1
+                if kind == "rewind":
+                    expected = self.ancestor
+                    git(self.remote, "update-ref", "refs/heads/selected", expected)
+                elif kind == "delete":
+                    git(self.remote, "update-ref", "-d", "refs/heads/selected")
+                elif kind == "advance":
+                    self.advance_peer()
+                    expected = git(self.peer, "rev-parse", "HEAD")
+                elif kind == "same-result":
+                    expected = git(self.local, "rev-parse", "HEAD")
+                    git(self.remote, "fetch", "--no-tags", str(self.local), "HEAD")
+                    git(self.remote, "update-ref", "refs/heads/selected", expected)
+                else:
+                    self.fail(f"Unknown race: {kind}")
+            return real_run(*args, **kwargs)
+        with patch.object(release, "run", side_effect=concurrent_push):
+            with self.assertRaises(subprocess.CalledProcessError):
+                release.bump_branch(self.sha, "selected", "patch")
+        self.assertEqual(pushes, 1)
+        self.assertEqual(release.remote_ref("refs/heads/selected"), expected)
+        self.assertEqual(git(self.remote, "tag", "--list"), "")
+
+    def test_advertised_branch_rewind_rejected_before_update(self):
+        self.advertised_race("rewind")
+
+    def test_advertised_branch_deletion_not_recreated(self):
+        self.advertised_race("delete")
+
+    def test_advertised_branch_advance_rejected(self):
+        self.advertised_race("advance")
+
+    def test_advertised_same_result_race_rejected(self):
+        self.advertised_race("same-result")
+
+    def test_missing_or_nonexecutable_guard_fails_closed(self):
+        guard = self.local / ".github/scripts/bump-hooks/pre-push"
+        guard.chmod(0o644)
+        for absent in (False, True):
+            if absent:
+                guard.unlink()
+            with self.subTest(absent=absent), \
+                    patch.object(release, "__file__", str(self.local / ".github/scripts/release.py")):
+                with self.assertRaisesRegex(ValueError, "guard is missing or not executable"):
+                    release.bump_branch(self.sha, "selected", "patch")
+            self.assertEqual(git(self.local, "rev-parse", "HEAD"), self.sha)
+            self.assertEqual(release.remote_ref("refs/heads/selected"), self.sha)
 
     def test_immutable_sha_and_invalid_sha(self):
         for sha in ("selected", "a" * 40, "a" * 39, "a" * 41):

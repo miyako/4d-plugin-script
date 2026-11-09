@@ -12,9 +12,9 @@ from urllib.parse import quote
 from source_version import SOURCE_PATHS, bump, read
 
 
-def run(*args, input=None):
+def run(*args, input=None, env=None):
     return subprocess.run(
-        args, input=input, text=True, stdout=subprocess.PIPE, check=True
+        args, input=input, env=env, text=True, stdout=subprocess.PIPE, check=True
     ).stdout.strip()
 
 
@@ -142,6 +142,10 @@ def publish(sha, assets):
 
 def bump_branch(sha, branch, mode):
     selected_sha(sha)
+    hooks = Path(__file__).resolve().parent / "bump-hooks"
+    guard = hooks / "pre-push"
+    if not guard.is_file() or not os.access(guard, os.X_OK):
+        raise ValueError("Required advertised-SHA pre-push guard is missing or not executable")
     run("git", "check-ref-format", f"refs/heads/{branch}")
     ref = f"refs/heads/{branch}"
     if remote_ref(ref) != sha:
@@ -154,8 +158,10 @@ def bump_branch(sha, branch, mode):
     if remote_ref(ref) != sha:
         raise ValueError("Selected branch moved during bump; nothing pushed")
     commit = run("git", "rev-parse", "HEAD")
-    result = run("git", "-c", "push.followTags=false", "push", "--porcelain",
-                 "--no-follow-tags", "origin", f"{commit}:{ref}")
+    result = run("git", "-c", f"core.hooksPath={hooks}", "-c", "push.followTags=false",
+                 "push", "--porcelain", "--no-follow-tags", "origin", f"{commit}:{ref}",
+                 env={**os.environ, "BUMP_EXPECTED_SHA": sha,
+                      "BUMP_EXPECTED_REF": ref, "BUMP_NEW_SHA": commit})
     if not any(line.startswith(" \t") and line.split("\t")[1].endswith(f":{ref}")
                for line in result.splitlines()):
         raise ValueError("Branch push was not a new update; inspect remote state")

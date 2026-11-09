@@ -118,9 +118,12 @@ Bump version retains the patch/minor/major choice, validates coordinated source
 metadata, commits only `Script.xcodeproj/project.pbxproj`, `Info.plist` and the
 source `English.lproj/InfoPlist.strings`, and pushes only the explicitly selected
 branch, nonforce with follow-tags disabled.
-It rejects a branch that moved since dispatch or during preparation. It creates
-no tag and does not start Build. Dispatch again from the current branch if a
-concurrent update prevents the bump.
+It rejects a branch that moved since dispatch or during preparation. A pre-push
+hook also requires the receive-pack advertised old SHA to equal the selected
+SHA, rejecting advances, rewinds, deletions and same-result races between the
+last check and the push advertisement. Git's normal nonforce update checks
+remain in effect. It creates no tag and does not start Build. Dispatch again
+from the current branch if a concurrent update prevents the bump.
 
 The source authority is the single strict `X.Y.Z` shared by all six
 `MARKETING_VERSION` and six `CURRENT_PROJECT_VERSION` settings and the source
