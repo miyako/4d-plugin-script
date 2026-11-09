@@ -1,1 +1,5 @@
-﻿/* Localized versions of Info.plist keys */CFBundleName = "Script";CFBundleShortVersionString = "1.0";CFBundleGetInfoString = "Script version 1.0, Copyright 2014 miyako.";
+﻿/* Localized versions of Info.plist keys */
+
+CFBundleName = "Script";
+CFBundleShortVersionString = "1.0.6";
+CFBundleGetInfoString = "Script version 1.0.6, Copyright 2014 miyako.";

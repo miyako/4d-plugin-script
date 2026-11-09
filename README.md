@@ -109,3 +109,66 @@ $vbs:=Script parse (".vbs";"CStr(4*atn(1.0))")
 $now_js:=Script parse ("JScript";"new Date().toString()")
 $now_vbs:=Script parse ("vbscript";"CStr(Now)")
 ```
+
+## Release maintenance
+
+**Bump version** and **Build** are independent manual Actions workflows. Select
+the desired branch in the Actions UI; neither workflow is restricted to `master`.
+Bump version retains the patch/minor/major choice, validates coordinated source
+metadata, commits only `Script.xcodeproj/project.pbxproj`, `Info.plist` and the
+source `English.lproj/InfoPlist.strings`, and pushes only the explicitly selected
+branch, nonforce with follow-tags disabled.
+It rejects a branch that moved since dispatch or during preparation. It creates
+no tag and does not start Build. Dispatch again from the current branch if a
+concurrent update prevents the bump.
+
+The source authority is the single strict `X.Y.Z` shared by all six
+`MARKETING_VERSION` and six `CURRENT_PROJECT_VERSION` settings and the source
+plist's `CFBundleShortVersionString` (and `CFBundleVersion` when present).
+Supported plist references to either coordinated Xcode setting, and
+current-project references to `MARKETING_VERSION`, are preserved. Unknown,
+cyclic, malformed or drifted versions fail before bump/build. The former bump
+header promised coordinated current-project versions but its code only changed
+marketing versions; the migration repairs that drift to the existing marketing
+version, without incrementing it. The source localized short version and
+`CFBundleGetInfoString` version are also coordinated: their stale `1.0` values
+otherwise override the displayed bundle version. The copyright year is retained.
+Prebuilt bundle metadata, dependency versions and 4D format versions are not
+release-version inputs.
+
+**Build** has no inputs beyond the branch selector and runs only via
+`workflow_dispatch`. Every checkout uses the selected immutable `github.sha`,
+not a moving branch or tag. It retains the Windows x64 build, macOS universal
+build, merged bundle, signature verification, ZIP/DMG notarization and DMG
+stapling. The macOS bundle is still built and distributed even though the
+Active Scripting command implementation is Windows-only. Assets remain
+`Script-X.Y.Z.zip` and `Script-X.Y.Z.dmg`; certificate/notary secret names and
+native dependencies are unchanged.
+
+Build runs are serialized repository-wide across branches. Before building,
+and again after every required native/signing/notary/package gate immediately
+before publication, authenticated paginated release-list checks include drafts.
+An existing remote tag or same-tag draft/published release blocks publication;
+API errors (including 404), authentication/network failures and malformed pages
+fail closed. Publication creates `vX.Y.Z` at the selected SHA using a create-only
+Git ref POST, verifies the remote SHA, then creates a published non-prerelease
+using a REST POST with explicit tag, commit and name. Notes remain empty, as in
+the original workflow (no generated notes). Asset POSTs target only the newly
+returned release ID; nothing is overwritten.
+
+**Partial publication recovery:** there is no automatic deletion, editing,
+rollback or retry. A failed tag/release/upload request can leave a tag, a
+published release without assets, or a release with only some assets. Inspect
+the Actions error and remote tag/release/assets before making a human recovery
+decision; a lost response may still mean the server accepted the request.
+Rerunning Build for the same version intentionally fails on that retained state.
+Do not delete or retarget published versions automatically; reconcile partial
+state explicitly outside these workflows, or bump source metadata and publish
+a fresh version once the incident is understood.
+
+Local lifecycle checks (no native builds, signing, dispatch or publication):
+
+```sh
+python3 -m unittest discover -s .github/tests -v
+actionlint .github/workflows/*.yml
+```

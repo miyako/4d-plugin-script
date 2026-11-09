@@ -1,2 +1,3 @@
 Script.4dbase/userPreferences.*
 build/*
+.github/**/__pycache__/
