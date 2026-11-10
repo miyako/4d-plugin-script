@@ -21,6 +21,8 @@ class ARRAY_INTEGER
 {
 
 private:
+	ARRAY_INTEGER(const ARRAY_INTEGER&) = delete;
+	ARRAY_INTEGER& operator=(const ARRAY_INTEGER&) = delete;
 
 	CShortArray* _CShortArray;
 	
