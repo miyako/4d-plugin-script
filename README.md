@@ -110,6 +110,16 @@ $now_js:=Script parse ("JScript";"new Date().toString()")
 $now_vbs:=Script parse ("vbscript";"CStr(Now)")
 ```
 
+## Native ownership maintenance
+
+The [ownership audit](.github/tests/ownership-audit.md) records the exact
+bundled SDK, complete native/build inventory, dormant wrapper fixes and
+offline regression evidence. Run `python3 .github/tests/test_ownership.py -v`
+on macOS for an unsigned ASan/UBSan host compiling the actual dispatcher,
+all wrappers and complete unchanged SDK. It performs no scripting or system
+automation. The macOS dispatcher is a no-op; this is not Windows
+`Script parse` execution or a reproduced Windows 4D crash.
+
 ## Release maintenance
 
 **Bump version** and **Build** are independent manual Actions workflows. Select

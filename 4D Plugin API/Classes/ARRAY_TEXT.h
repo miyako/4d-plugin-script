@@ -22,6 +22,8 @@ class ARRAY_TEXT
 {
 
 private:
+	ARRAY_TEXT(const ARRAY_TEXT&) = delete;
+	ARRAY_TEXT& operator=(const ARRAY_TEXT&) = delete;
 
 	CUTF16StringArray* _CUTF16StringArray;
 	
